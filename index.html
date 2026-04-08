@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Perfect Circle Challenge</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            background-color: #1a1a1a;
+            color: white;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden;
+            touch-action: none;
+        }
+
+        #ui {
+            position: absolute;
+            top: 20px;
+            text-align: center;
+            pointer-events: none;
+        }
+
+        h1 { margin: 0; font-weight: 300; color: #888; }
+        
+        #score-container {
+            font-size: 5rem;
+            font-weight: bold;
+            margin: 10px 0;
+            transition: color 0.3s;
+        }
+
+        #canvas {
+            cursor: crosshair;
+            touch-action: none;
+        }
+
+        .hint {
+            color: #555;
+            margin-top: 10px;
+        }
+
+        button {
+            margin-top: 20px;
+            padding: 10px 20px;
+            background: #333;
+            border: 1px solid #444;
+            color: white;
+            cursor: pointer;
+            pointer-events: all;
+            border-radius: 5px;
+        }
+
+        button:hover { background: #444; }
+    </style>
+</head>
+<body>
+
+    <div id="ui">
+        <h1>Circle Fit Score</h1>
+        <div id="score-container">0%</div>
+        <div id="message" class="hint">Draw a circle to start</div>
+        <button onclick="resetCanvas()">Clear</button>
+    </div>
+
+    <canvas id="canvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const scoreDisplay = document.getElementById('score-container');
+        const messageDisplay = document.getElementById('message');
+
+        let isDrawing = false;
+        let points = [];
+
+        // Set canvas size
+        function resize() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        // Input Listeners
+        canvas.addEventListener('mousedown', startDrawing);
+        canvas.addEventListener('mousemove', draw);
+        window.addEventListener('mouseup', endDrawing);
+
+        canvas.addEventListener('touchstart', (e) => { e.preventDefault(); startDrawing(e.touches[0]); });
+        canvas.addEventListener('touchmove', (e) => { e.preventDefault(); draw(e.touches[0]); });
+        window.addEventListener('touchend', endDrawing);
+
+        function startDrawing(e) {
+            isDrawing = true;
+            points = [];
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            scoreDisplay.textContent = "0%";
+            scoreDisplay.style.color = "white";
+            addPoint(e);
+        }
+
+        function draw(e) {
+            if (!isDrawing) return;
+            
+            const point = addPoint(e);
+            
+            // Draw line
+            ctx.lineWidth = 5;
+            ctx.lineCap = 'round';
+            ctx.strokeStyle = '#00ffcc';
+            
+            if (points.length > 1) {
+                const prev = points[points.length - 2];
+                ctx.beginPath();
+                ctx.moveTo(prev.x, prev.y);
+                ctx.lineTo(point.x, point.y);
+                ctx.stroke();
+            }
+        }
+
+        function addPoint(e) {
+            const rect = canvas.getBoundingClientRect();
+            const p = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+            points.push(p);
+            return p;
+        }
+
+        function endDrawing() {
+            if (!isDrawing) return;
+            isDrawing = false;
+            
+            if (points.length < 20) {
+                messageDisplay.textContent = "Draw a bigger circle!";
+                return;
+            }
+
+            calculateCircleScore();
+        }
+
+        function calculateCircleScore() {
+            // 1. Find the Centroid (average x and y)
+            let sumX = 0, sumY = 0;
+            points.forEach(p => { sumX += p.x; sumY += p.y; });
+            const centerX = sumX / points.length;
+            const centerY = sumY / points.length;
+
+            // 2. Calculate Radii and check angle coverage
+            let totalRadius = 0;
+            let angles = [];
+            const radii = [];
+
+            points.forEach(p => {
+                const r = Math.sqrt(Math.pow(p.x - centerX, 2) + Math.pow(p.y - centerY, 2));
+                radii.push(r);
+                totalRadius += r;
+                
+                // Track angle to see if it's a full loop
+                angles.push(Math.atan2(p.y - centerY, p.x - centerX));
+            });
+
+            const avgRadius = totalRadius / points.length;
+
+            // 3. Calculate Radius Deviation (how much it wobbles)
+            let variance = 0;
+            radii.forEach(r => {
+                variance += Math.abs(r - avgRadius);
+            });
+            const avgDeviation = variance / points.length;
+            
+            // Higher deviation = lower score. (0.2 * avgRadius is a rough threshold for 0%)
+            let fitness = Math.max(0, 1 - (avgDeviation / (avgRadius * 0.25)));
+
+            // 4. Check for Completeness (did they draw a full circle?)
+            // We check if the start and end points are close and if angles cover near 2*PI
+            const startPoint = points[0];
+            const endPoint = points[points.length - 1];
+            const distStartEnd = Math.sqrt(Math.pow(startPoint.x - endPoint.x, 2) + Math.pow(startPoint.y - endPoint.y, 2));
+            
+            const gapPenalty = Math.max(0, 1 - (distStartEnd / (avgRadius * 0.5)));
+            
+            // Final Score Calculation
+            let finalScore = (fitness * 0.7) + (gapPenalty * 0.3);
+            
+            // Convert to Percentage
+            let percentage = Math.round(finalScore * 100);
+            if (percentage > 100) percentage = 100;
+            if (percentage < 0) percentage = 0;
+
+            // Visual Feedback
+            displayScore(percentage, centerX, centerY, avgRadius);
+        }
+
+        function displayScore(score, cx, cy, r) {
+            scoreDisplay.textContent = score + "%";
+            
+            // Color coding
+            if (score > 90) scoreDisplay.style.color = "#00ff00";
+            else if (score > 70) scoreDisplay.style.color = "#ffff00";
+            else scoreDisplay.style.color = "#ff4444";
+
+            messageDisplay.textContent = score > 85 ? "Incredible!" : score > 50 ? "Not bad!" : "Keep practicing!";
+
+            // Draw the "Ideal" circle guide in the background
+            ctx.beginPath();
+            ctx.setLineDash([5, 10]);
+            ctx.arc(cx, cy, r, 0, Math.PI * 2);
+            ctx.strokeStyle = "rgba(255, 255, 255, 0.2)";
+            ctx.stroke();
+            ctx.setLineDash([]);
+        }
+
+        function resetCanvas() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            scoreDisplay.textContent = "0%";
+            scoreDisplay.style.color = "white";
+            messageDisplay.textContent = "Draw a circle to start";
+        }
+    </script>
+</body>
+</html>
